@@ -1,0 +1,6 @@
+Revision history for Perl extension DBIx::MyParsePP.
+
+0.01  Sun Jul 15 09:27:44 2007
+	- original version; created by h2xs 1.23 with options
+		-A -X -n DBIx::MyParsePP
+

@@ -1,0 +1,19 @@
+Changes
+Makefile.PL
+MANIFEST
+README
+LICENCE
+
+t/twins.t
+
+lib/DBIx/MyParsePP.pm
+lib/DBIx/MyParsePP/Lexer.pm
+lib/DBIx/MyParsePP/Token.pm
+lib/DBIx/MyParsePP/Parser.pm
+lib/DBIx/MyParsePP/Rule.pm
+lib/DBIx/MyParsePP/Charsets.pm
+lib/DBIx/MyParsePP/Symbols.pm
+lib/DBIx/MyParsePP/Ascii.pm
+
+bin/conv.pl
+META.yml                                 Module meta-data (added by MakeMaker)
