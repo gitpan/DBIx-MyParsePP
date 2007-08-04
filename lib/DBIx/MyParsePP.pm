@@ -1,37 +1,35 @@
 package DBIx::MyParsePP;
 
-use strict;
-use warnings;
-
 use DBIx::MyParsePP::Lexer;
 use DBIx::MyParsePP::Parser;
+use DBIx::MyParsePP::Token;
+use DBIx::MyParsePP::Rule;
 
-our $VERSION = '0.10';
+our $VERSION = '0.20';
 
 use constant MYPARSEPP_YAPP	=> 0;
 
 sub new {
 	my $class = shift;
-	return bless ([], $class );
+	my $parser = bless ([], $class );
+	my $yapp = DBIx::MyParsePP::Parser->new();
+	$parser->[MYPARSEPP_YAPP] = $yapp;
+	return $parser;
 }
 
 sub parse {
-	my ($myparse, $string) = @_;
+	my ($parser, $string) = @_;
+
 	my $lexer = DBIx::MyParsePP::Lexer->new($string);
+	my $yapp = $parser->[MYPARSEPP_YAPP];
 	
-	my $parser = DBIx::MyParsePP::Parser->new();
-	
-	my $result = $parser->YYParse( yylex => sub { $lexer->yylex() }, yyerror => \&error );
+	my $result = $yapp->YYParse( yylex => sub { $lexer->yylex() } );
 
 	if (defined $result) {
 		return $result->[0];
 	} else {
 		return undef;
 	}
-}
-
-sub error {
-	# FIXME
 }
 
 1;

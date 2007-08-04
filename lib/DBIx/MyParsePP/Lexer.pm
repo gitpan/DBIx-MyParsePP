@@ -16,11 +16,11 @@
 package DBIx::MyParsePP::Lexer;
 
 use strict;
-use warnings;
 
 use DBIx::MyParsePP::Symbols;
 use DBIx::MyParsePP::Charsets;
 use DBIx::MyParsePP::Ascii;
+use DBIx::MyParsePP::Token;
 
 use constant CTYPE_U	=> 01;		# Uppercase
 use constant CTYPE_L	=> 02;		# Lowercase
@@ -34,9 +34,7 @@ use constant CTYPE_X	=> 0200;	# heXadecimal digit
 use constant LEXER_STRING	=> 0;
 use constant LEXER_PTR		=> 1;
 use constant LEXER_TOK_START	=> 2;
-
-use constant LEXER_STATE_MAP	=> 5;
-use constant LEXER_IDENT_MAP	=> 6;
+use constant LEXER_CHARSET	=> 3;
 
 use constant LEXER_YYLINENO	=> 7;
 use constant LEXER_NEXT_STATE	=> 8;
@@ -52,8 +50,6 @@ use constant LEXER_IGNORE_SPACE		=> 18;
 
 use constant LEXER_VERSION_ID		=> 19;
 
-
-
 use constant OPTION_FOUND_COMMENT	=> 1 << 15;
 use constant CLIENT_MULTI_STATEMENTS	=> 1 << 16;
 use constant SERVER_MORE_RESULTS_EXISTS	=> 8;
@@ -66,25 +62,29 @@ use constant MODE_ANSI			=> MODE_MYSQL40 * 2;
 use constant MODE_NO_AUTO_VALUE_ON_ZERO	=> MODE_ANSI * 2;
 use constant MODE_NO_BACKSLASH_ESCAPES	=> MODE_NO_AUTO_VALUE_ON_ZERO * 2;
 
+my %state_maps;
+my %ident_maps;
+
 1;
 
 sub new {
 	my $class = shift;
 	my $lexer = bless([], $class);
 
-	$lexer->[LEXER_STRING]		= shift()."\0";
-	$lexer->[LEXER_YYLINENO]	= 0;
-	$lexer->[LEXER_TOK_START]	= 0;
-	$lexer->[LEXER_PTR]		= 0;
-	$lexer->[LEXER_NEXT_STATE]	= 'MY_LEX_START';
+	$lexer->[LEXER_STRING]			= shift()."\0";
+	$lexer->[LEXER_YYLINENO]		= 0;
+	$lexer->[LEXER_TOK_START]		= 0;
+	$lexer->[LEXER_PTR]			= 0;
+	$lexer->[LEXER_NEXT_STATE]		= 'MY_LEX_START';
 
 	$lexer->[LEXER_CLIENT_CAPABILITIES]	= CLIENT_MULTI_STATEMENTS;
 	$lexer->[LEXER_STMT_PREPARE_MODE]	= 0;
 	$lexer->[LEXER_SQL_MODE]		= 0;	# CHECKME
 
-	$lexer->[LEXER_VERSION_ID]	= '50045';
+	$lexer->[LEXER_VERSION_ID]		= '50045';
+	$lexer->[LEXER_CHARSET]			= 'ascii';
 
-	$lexer->init_state_maps();
+	$lexer->init_state_maps($lexer->[LEXER_CHARSET]);
 
 	return $lexer;
 	
@@ -104,7 +104,7 @@ sub yylex {
 	if (($res[0] eq '0') && ($res[1] eq '0')) {
 		return (undef, '');	# EOF
 	} else {
-		return ($res[0], bless(\@res, 'DBIx::MyParsePP::Token'));
+		return ($res[0], DBIx::MyParsePP::Token->new(@res));
 	}
 }	
 
@@ -112,8 +112,8 @@ sub MYSQLlex {
 	my $lexer = shift;
 
 	my $string = $lexer->[LEXER_STRING];
-	my $state_map = $lexer->[LEXER_STATE_MAP];
-	my $ident_map = $lexer->[LEXER_IDENT_MAP];
+	my $state_map = $state_maps{$lexer->[LEXER_CHARSET]};
+	my $ident_map = $ident_maps{$lexer->[LEXER_CHARSET]};
 	
 	my $c = 0;
 	my @token;
@@ -141,7 +141,7 @@ sub MYSQLlex {
 		}
 		
 		if ($state eq 'MY_LEX_ESCAPE') {
-			return ("NULL_SYM","NULL_SYM") if $lexer->yyGet() == ord('N');
+			return ("NULL_SYM","NULL") if $lexer->yyGet() == ord('N');
 		}
 	
 		if (
@@ -169,7 +169,7 @@ sub MYSQLlex {
 			if ($c == ord(',')) {
 				$lexer->[LEXER_TOK_START] = $lexer->[LEXER_PTR];
 			} elsif (($c == ord('?')) && (!$ident_map->[$lexer->yyPeek()])) {		# CHANGED
-				return ("PARAM_MARKER","PARAM_MARKER");
+				return ("PARAM_MARKER","?");
 			}
 			return (chr($c), $lex_str);
 		} elsif ($state eq 'MY_LEX_IDENT_OR_NCHAR') {
@@ -314,7 +314,7 @@ sub MYSQLlex {
 			while ($c = $lexer->yyGet()) {
 				my $var_length = $lexer->my_mbcharlen($c);
 				if ($var_length == 1) {
-					last if $c = ord(NAMES_SEP_CHAR);
+					last if $c == ord(NAMES_SEP_CHAR);
 					if ($c == $quote_char) {
 						last if $lexer->yyPeek() != $quote_char;
 						$c = $lexer->yyGet();
@@ -414,7 +414,7 @@ sub MYSQLlex {
 				($state_map->[$lexer->yyPeek()] eq 'MY_LEX_LONG_CMP_OP')
 			) {
 				$lexer->yySkip();
-				if ($state_map->[$lexer->yyPeek()] eq 'MY_LEX_LONG_CMP_OP') {
+				if ($state_map->[$lexer->yyPeek()] eq 'MY_LEX_CMP_OP') {
 					$lexer->yySkip();
 				}
 			}
@@ -575,9 +575,8 @@ sub MYSQLlex {
 
 			$lexer->[LEXER_NEXT_STATE] = 'MY_LEX_IDENT_SEP' if $c == ord('.');
 	
-			my $length = ($lexer->[LEXER_PTR] - $lexer->[LEXER_TOK_START]) + 1;
+			my $length = ($lexer->[LEXER_PTR] - $lexer->[LEXER_TOK_START]) - 1;
 			return ('ABORT_SYM','ABORT_SYM') if $length == 0;
-	
 			if (@token = $lexer->find_keyword($length, 0)) {
 				$lexer->yyUnget();
 				return @token;
@@ -591,6 +590,8 @@ sub MYSQLlex {
 sub init_state_maps {
 
 	my $lexer = shift;
+
+	return if exists $state_maps{$lexer->[LEXER_CHARSET]};
 
 	my @state_map;
 	my @ident_map;
@@ -612,7 +613,7 @@ sub init_state_maps {
 	$state_map[ord("'")] = 'MY_LEX_STRING';
 	$state_map[ord('.')] = 'MY_LEX_REAL_OR_POINT';
 
-	$state_map[ord('>')] = $state_map[ord('=')] = $state_map[ord('=')] = 'MY_LEX_CMP_OP';
+	$state_map[ord('>')] = $state_map[ord('=')] = $state_map[ord('!')] = 'MY_LEX_CMP_OP';
 	$state_map[ord('<')] = 'MY_LEX_LONG_CMP_OP';
 	$state_map[ord('&')] = $state_map[ord('|')] = 'MY_LEX_BOOL';
 	$state_map[ord('#')] = 'MY_LEX_COMMENT';
@@ -634,8 +635,8 @@ sub init_state_maps {
 	$state_map[ord('b')] = $state_map[ord('B')] = 'MY_LEX_IDENT_OR_BIN';
 	$state_map[ord('n')] = $state_map[ord('N')] = 'MY_LEX_IDENT_OR_NCHAR';
 
-	$lexer->[LEXER_STATE_MAP] = \@state_map;
-	$lexer->[LEXER_IDENT_MAP] = \@ident_map;
+	$state_maps{$lexer->[LEXER_CHARSET]} = \@state_map;
+	$ident_maps{$lexer->[LEXER_CHARSET]} = \@ident_map;
 }
 
 
@@ -721,6 +722,9 @@ sub get_text {
 							($prev_str eq '%')
 						) {
 							substr($new_str, $to++, 1) = "\\";
+							substr($new_str, $to++, 1) = $prev_str;	# Added
+						} else {
+							substr($new_str, $to++, 1) = $prev_str;
 						}
 					} elsif (substr($string, $str, 1) eq $sep) {
 						substr($new_str, $to++, 1) = substr($string, $str++, 1);
@@ -827,6 +831,7 @@ sub find_keyword {
 	my $symbol;
 	if ($function) {
 		$symbol = $DBIx::MyParsePP::Symbols::functions->{uc($keyword)};
+		$symbol = $DBIx::MyParsePP::Symbols::symbols->{uc($keyword)} if not defined $symbol;
 	} else {
 		$symbol = $DBIx::MyParsePP::Symbols::symbols->{uc($keyword)};
 	}
@@ -836,3 +841,56 @@ sub find_keyword {
 }
 
 1;
+
+
+__END__
+
+=pod
+
+=head1 NAME
+
+DBIx::MyParsePP::Lexer - Pure-perl SQL lexer based on MySQL's source
+
+=head1 SYNOPSIS
+
+	use DBIx::MyParsePP::Lexer;
+	use Data::Dumper;
+
+	my $lexer = DBIx::MyParsePP::Lexer->new($string);
+	
+	while ( my $token = $lexer->yylex() ) {
+
+		print Dumper $token;
+		
+		last if $token->type() eq 'END_OF_INPUT';
+	
+	}
+
+=head1 DESCRIPTION
+
+C<DBIx::MyParsePP::Lexer> is a translation of the lexer function from MySQL into pure Perl.
+
+The goal of the translation was to closely follow the method of operation of the original lexer --
+therefore performance is suffering at the expense of compatibility. For example, the original character set
+definitions are used, rather than determining which letter is uppercase or lowercase using a Perl regular
+expression.
+
+=head1 LICENCE
+
+This file contains code derived from code Copyright (C) 2000-2006 MySQL AB
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; version 2 of the License.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License in the file named LICENCE for more details.
+
+=head1 BUGS
+
+One Lexer object is required for every string being parsed/lexed.
+Lexer-related options from MySQL are not configurable.
+
+=cut
