@@ -5,7 +5,7 @@ use DBIx::MyParsePP::Parser;
 use DBIx::MyParsePP::Token;
 use DBIx::MyParsePP::Rule;
 
-our $VERSION = '0.20';
+our $VERSION = '0.25';
 
 use constant MYPARSEPP_YAPP	=> 0;
 

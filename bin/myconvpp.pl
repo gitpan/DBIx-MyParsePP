@@ -6,7 +6,7 @@ use strict;
 use Data::Dumper;
 
 my $orig_file = 'mysql/sql_yacc.yy';
-my $new_file = 'myparsepp.yy';
+my $new_file = 'mysql/myparsepp.yy';
 open (ORIG, "$orig_file") or die $!;
 read (ORIG, my $orig, -s $orig_file);
 
@@ -62,7 +62,7 @@ my $new = join("\n%%\n", $new_prologue, $new_rules, $new_epilogue);
 
 open (NEW, ">$new_file") or die $!;
 print NEW $new;
-system(my $line = "yapp -n -m MyParser -m DBIx::MyParsePP::Parser -o lib/DBIx/MyParsePP/Parser.pm $new_file");
+system(my $line = "yapp -s -n -m MyParser -m DBIx::MyParsePP::Parser -o lib/DBIx/MyParsePP/Parser.pm $new_file");
 print "$line\n";
 
 
