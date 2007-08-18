@@ -1,17 +1,44 @@
 package DBIx::MyParsePP;
+use strict;
 
 use DBIx::MyParsePP::Lexer;
 use DBIx::MyParsePP::Parser;
-use DBIx::MyParsePP::Token;
-use DBIx::MyParsePP::Rule;
+use DBIx::MyParsePP::Query;
 
-our $VERSION = '0.25';
 
-use constant MYPARSEPP_YAPP	=> 0;
+our $VERSION = '0.50';
+
+use constant MYPARSEPP_YAPP			=> 0;
+use constant MYPARSEPP_CHARSET			=> 1;
+use constant MYPARSEPP_VERSION			=> 2;
+use constant MYPARSEPP_SQL_MODE			=> 3;
+use constant MYPARSEPP_CLIENT_CAPABILITIES	=> 4;
+use constant MYPARSEPP_STMT_PREPARE_MODE	=> 5;
+
+my %args = (
+	charset		=> MYPARSEPP_CHARSET,
+	version		=> MYPARSEPP_VERSION,
+	sql_mode	=> MYPARSEPP_SQL_MODE,
+	client_capabilities	=> MYPARSEPP_CLIENT_CAPABILITIES,
+	stmt_prepare_mode	=> MYPARSEPP_STMT_PREPARE_MODE
+);
+
+1;
 
 sub new {
 	my $class = shift;
 	my $parser = bless ([], $class );
+
+        my $max_arg = (scalar(@_) / 2) - 1;
+
+        foreach my $i (0..$max_arg) {
+                if (exists $args{$_[$i * 2]}) {
+                        $parser->[$args{$_[$i * 2]}] = $_[$i * 2 + 1];
+                } else {
+                        warn("Unkown argument '$_[$i * 2]' to DBIx::MyParsePP->new()");
+                }
+        }
+
 	my $yapp = DBIx::MyParsePP::Parser->new();
 	$parser->[MYPARSEPP_YAPP] = $yapp;
 	return $parser;
@@ -20,16 +47,33 @@ sub new {
 sub parse {
 	my ($parser, $string) = @_;
 
-	my $lexer = DBIx::MyParsePP::Lexer->new($string);
+	my $lexer = DBIx::MyParsePP::Lexer->new(
+		string => $string,
+		charset => $parser->[MYPARSEPP_CHARSET],
+		version	 => $parser->[MYPARSEPP_VERSION],
+		sql_mode => $parser->[MYPARSEPP_SQL_MODE],
+		client_capabilities => $parser->[MYPARSEPP_CLIENT_CAPABILITIES],
+		stmt_prepare_mode => $parser->[MYPARSEPP_CLIENT_CAPABILITIES]
+	);
+		
+	my $query = DBIx::MyParsePP::Query->new(
+		lexer => $lexer
+	);
+
 	my $yapp = $parser->[MYPARSEPP_YAPP];
-	
-	my $result = $yapp->YYParse( yylex => sub { $lexer->yylex() } );
+	my $result = $yapp->YYParse( yylex => sub { $lexer->yylex() }, yyerror => sub { $parser->error(@_, $query) } );
 
 	if (defined $result) {
-		return $result->[0];
-	} else {
-		return undef;
+		$query->setRoot($result->[0]);
 	}
+
+	return $query;
+}
+
+sub error {
+	my ($parser, $yapp, $query) = @_;
+	$query->setActual($yapp->YYCurval);
+	$query->setExpected($yapp->YYExpect);
 }
 
 1;
@@ -47,28 +91,31 @@ DBIx::MyParsePP - Pure-perl SQL parser based on MySQL grammar and lexer
 
   my $parser = DBIx::MyParsePP->new();
 
-  my $result = $parser->parse("SELECT 1");
+  my $query = $parser->parse("SELECT 1");
 
-  print Dumper $result;
-  print $result->asString();
+  print Dumper $query;
+  print $query->toString();
 
 =head1 DESCRIPTION
 
 C<DBIx::MyParsePP> is a pure-perl SQL parser that implements the MySQL grammar and lexer.
-The grammar was converted from the original sql_yacc.yy file by removing all the
-C code. The lexer comes from sql_lex.cc, completely translated in Perl almost verbatim.
+The grammar was automatically converted from the original C<sql_yacc.yy> file by removing all
+the C code. The lexer comes from C<sql_lex.cc>, completely translated in Perl almost verbatim.
 
 The grammar is converted into Perl form using L<Parse::Yapp>.
 
+=head1 CONSTRUCTOR
+
+C<charset>, C<version>, C<sql_mode>, C<client_capabilities> and C<stmt_prepare_mode> can be passed
+as arguments to the constructor. Please C<use DBIx::MyParsePP::Lexer> to bring in the required constants
+and see L<DBIx::MyParsePP::Lexer> for information.
+
 =head1 METHODS
 
-C<DBIx::MyParsePP> provides a single method, C<parse()> which takes the string to be parsed.
-The result is either C<undef> if the string can not be parsed, or a L<DBIx::MyParsePP::Rule>
-object that contains all nested grammar elements inside it. Within that tree, terminal symbols
-are returned as L<DBIx::MyParsePP::Token> objects.
+C<DBIx::MyParsePP> provides C<parse()> which takes the string to be parsed.
+The result is a L<DBIx::MyParsePP::Query> object which contains the result from the parsing.
 
-Queries can be reconstructed back into SQL by calling the C<asString()> method of the top-level
-L<DBIx:MyParsePP::Rule> object.
+Queries can be reconstructed back into SQL by calling the C<toString()> method.
 
 =head1 SPECIAL CONSIDERATIONS
 
@@ -81,7 +128,15 @@ a GCC compiler and produces more concise parse trees.
 The parse trees produced by C<DBIx::MyParsePP> contain one leaf for every grammar rule that has been
 matched, even rules that serve no useful purpose. Therefore, parsing event simple statements such
 as C<SELECT 1> produce trees dozens of levels deep. Please exercise caution when walking those trees
-recursively.
+recursively. The L<DBIx::MyParsePP::Rule> module contains the C<extract()> and C<shrink()> methods
+which are useful for dealing with the inherent complexity of the MySQL grammar.
+
+=head1 USING GRAMMARS FROM OTHER MYSQL VERSIONS
+
+The package by default parses strings using the grammar from MySQL version 5.0.45. If you wish to use
+the grammar from a different version, you can use the C<bin/myconvpp.pl> script to prepare the grammar:
+
+	$ perl bin/myconvpp.pl --
 
 =head1 SEE ALSO
 
@@ -110,5 +165,8 @@ the README and LICENCE files.
 Please note that this module contains code copyright by MySQL AB released under
 the GNU General Public Licence, and not the GNU Lesser General Public Licence.
 Using this code for commercial purposes may require purchasing a licence from MySQL AB.
+
+The Parse::Yapp module and its related modules and shell scripts are copyright (c)
+1998-2001 Francois Desarmenien, France. All rights reserved.
 
 =cut

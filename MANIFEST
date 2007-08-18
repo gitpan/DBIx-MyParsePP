@@ -6,10 +6,14 @@ LICENCE
 
 t/twins.t
 t/simple.t
+t/error.t
+t/extract.t
+t/fields.t
+t/options.t
 
 bin/myparsepp.pl
 bin/mylexpp.pl
-bin/myconvpp.pl
+# bin/myconvpp.pl
 
 lib/DBIx/MyParsePP.pm
 lib/DBIx/MyParsePP/Lexer.pm
@@ -19,4 +23,12 @@ lib/DBIx/MyParsePP/Rule.pm
 lib/DBIx/MyParsePP/Charsets.pm
 lib/DBIx/MyParsePP/Symbols.pm
 lib/DBIx/MyParsePP/Ascii.pm
+lib/DBIx/MyParsePP/Latin1.pm
+lib/DBIx/MyParsePP/Query.pm
+
+# mysql/ascii.xml
+# mysql/Index.xml
+# mysql/lex.h
+# mysql/myparsepp.yy
+# mysql/sql_yacc.yy
 META.yml                                 Module meta-data (added by MakeMaker)

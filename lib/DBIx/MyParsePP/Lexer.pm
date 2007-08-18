@@ -14,12 +14,15 @@
 # Based on code Copyright (C) 2000-2006 MySQL AB
 
 package DBIx::MyParsePP::Lexer;
+require Exporter;
+@ISA = qw(Exporter);
+@EXPORT = qw(MODE_PIPES_AS_CONCAT MODE_ANSI_QUOTES MODE_IGNORE_SPACE MODE_NO_BACKSLASH_ESCAPES
+		CLIENT_MULTI_STATEMENTS MODE_HIGH_NOT_PRECEDENCE);
 
 use strict;
 
 use DBIx::MyParsePP::Symbols;
 use DBIx::MyParsePP::Charsets;
-use DBIx::MyParsePP::Ascii;
 use DBIx::MyParsePP::Token;
 
 use constant CTYPE_U	=> 01;		# Uppercase
@@ -31,39 +34,63 @@ use constant CTYPE_CTR	=> 040;		# Control character
 use constant CTYPE_B	=> 0100;	# Blank
 use constant CTYPE_X	=> 0200;	# heXadecimal digit
 
-use constant LEXER_STRING	=> 0;
-use constant LEXER_PTR		=> 1;
-use constant LEXER_TOK_START	=> 2;
-use constant LEXER_CHARSET	=> 3;
+use constant LEXER_STRING		=> 0;
+use constant LEXER_CHARSET		=> 1;
+use constant LEXER_VERSION		=> 2;
+use constant LEXER_SQL_MODE		=> 3;
+use constant LEXER_OPTIONS		=> 4;
+use constant LEXER_CLIENT_CAPABILITIES	=> 5;
+use constant LEXER_STMT_PREPARE_MODE	=> 6;
 
-use constant LEXER_YYLINENO	=> 7;
-use constant LEXER_NEXT_STATE	=> 8;
-use constant LEXER_IN_COMMENT	=> 9;
-use constant LEXER_SQL_MODE	=> 10;
-use constant LEXER_OPTIONS	=> 11;
-use constant LEXER_CLIENT_CAPABILITIES	=> 12;
-use constant LEXER_STMT_PREPARE_MODE	=> 13;
-use constant LEXER_FOUND_SEMICOLON	=> 14;
-use constant LEXER_SAFE_TO_CACHE_QUERY	=> 15;
-use constant LEXER_SERVER_STATUS	=> 17;
-use constant LEXER_IGNORE_SPACE		=> 18;
+use constant LEXER_PTR			=> 7;
+use constant LEXER_TOK_START		=> 8;
 
-use constant LEXER_VERSION_ID		=> 19;
+use constant LEXER_TOKENS		=> 9;
+
+use constant LEXER_YYLINENO		=> 10;
+use constant LEXER_NEXT_STATE		=> 11;
+use constant LEXER_IN_COMMENT		=> 12;
+use constant LEXER_FOUND_SEMICOLON	=> 13;
+use constant LEXER_SAFE_TO_CACHE_QUERY	=> 14;
+use constant LEXER_SERVER_STATUS	=> 15;
+use constant LEXER_CTYPE		=> 16;
+
 
 use constant OPTION_FOUND_COMMENT	=> 1 << 15;
 use constant CLIENT_MULTI_STATEMENTS	=> 1 << 16;
 use constant SERVER_MORE_RESULTS_EXISTS	=> 8;
-use constant MODE_ANSI_QUOTES		=> 4;
 use constant NAMES_SEP_CHAR		=> '\377';
 
+
+use constant MODE_PIPES_AS_CONCAT	=> 2;		# USE ME!
+use constant MODE_ANSI_QUOTES		=> 4;
+use constant MODE_IGNORE_SPACE		=> 8;
 use constant MODE_MYSQL323		=> 65536;
 use constant MODE_MYSQL40		=> MODE_MYSQL323 * 2;
 use constant MODE_ANSI			=> MODE_MYSQL40 * 2;
 use constant MODE_NO_AUTO_VALUE_ON_ZERO	=> MODE_ANSI * 2;
 use constant MODE_NO_BACKSLASH_ESCAPES	=> MODE_NO_AUTO_VALUE_ON_ZERO * 2;
+use constant MODE_STRICT_TRANS_TABLES	=> MODE_NO_BACKSLASH_ESCAPES * 2;
+use constant MODE_STRICT_ALL_TABLES        	=> MODE_STRICT_TRANS_TABLES * 2;
+use constant MODE_NO_ZERO_IN_DATE           	=> MODE_STRICT_ALL_TABLES * 2;
+use constant MODE_NO_ZERO_DATE               	=> MODE_NO_ZERO_IN_DATE * 2;
+use constant MODE_INVALID_DATES              	=> MODE_NO_ZERO_DATE * 2;
+use constant MODE_ERROR_FOR_DIVISION_BY_ZERO 	=> MODE_INVALID_DATES * 2;
+use constant MODE_TRADITIONAL                	=> MODE_ERROR_FOR_DIVISION_BY_ZERO * 2;
+use constant MODE_NO_AUTO_CREATE_USER        	=> MODE_TRADITIONAL * 2;
+use constant MODE_HIGH_NOT_PRECEDENCE        	=> MODE_NO_AUTO_CREATE_USER * 2;
 
 my %state_maps;
 my %ident_maps;
+
+my %args = (
+	string			=> LEXER_STRING,
+	charset			=> LEXER_CHARSET,
+	client_capabilities	=> LEXER_CLIENT_CAPABILITIES,
+	stmt_prepare_mode	=> LEXER_STMT_PREPARE_MODE,
+	sql_mode		=> LEXER_SQL_MODE,
+	version			=> LEXER_VERSION
+);
 
 1;
 
@@ -71,23 +98,70 @@ sub new {
 	my $class = shift;
 	my $lexer = bless([], $class);
 
-	$lexer->[LEXER_STRING]			= shift()."\0";
-	$lexer->[LEXER_YYLINENO]		= 0;
+	my $max_arg = (scalar(@_) / 2) - 1;
+
+	foreach my $i (0..$max_arg) {
+		if (exists $args{$_[$i * 2]}) {
+			$lexer->[$args{$_[$i * 2]}] = $_[$i * 2 + 1];
+		} else {
+			warn("Unkown argument '$_[$i * 2]' to DBIx::MyParsePP::Lexer->new()");
+		}
+        }
+
+	$lexer->[LEXER_STRING]			= $lexer->[LEXER_STRING]."\0";
+	$lexer->[LEXER_YYLINENO]		= 1;
 	$lexer->[LEXER_TOK_START]		= 0;
 	$lexer->[LEXER_PTR]			= 0;
 	$lexer->[LEXER_NEXT_STATE]		= 'MY_LEX_START';
 
-	$lexer->[LEXER_CLIENT_CAPABILITIES]	= CLIENT_MULTI_STATEMENTS;
-	$lexer->[LEXER_STMT_PREPARE_MODE]	= 0;
-	$lexer->[LEXER_SQL_MODE]		= 0;	# CHECKME
+	$lexer->[LEXER_CLIENT_CAPABILITIES]	= CLIENT_MULTI_STATEMENTS if not defined $lexer->[LEXER_CLIENT_CAPABILITIES];
+	$lexer->[LEXER_STMT_PREPARE_MODE]	= 0 if not defined $lexer->[LEXER_STMT_PREPARE_MODE];
+	$lexer->[LEXER_SQL_MODE]		= 0 if not defined $lexer->[LEXER_SQL_MODE];	# CHECKME
 
-	$lexer->[LEXER_VERSION_ID]		= '50045';
-	$lexer->[LEXER_CHARSET]			= 'ascii';
+	$lexer->[LEXER_VERSION]			= '50045' if not defined $lexer->[LEXER_VERSION];
+	$lexer->[LEXER_CHARSET]			= 'ascii' if not defined $lexer->[LEXER_CHARSET]; # FIXME
+
+	my $charset_uc = ucfirst($lexer->[LEXER_CHARSET]);
+	eval('
+		use DBIx::MyParsePP::'.$charset_uc.';
+		$lexer->[LEXER_CTYPE] = $DBIx::MyParsePP::'.$charset_uc.'::ctype;
+	');
+
+	if ($@) {
+		print STDERR "DBIx::MyParsePP::Lexer->new() failed: $@\n";
+		return undef;
+	}
+
+	$lexer->[LEXER_TOKENS] 			= [];
 
 	$lexer->init_state_maps($lexer->[LEXER_CHARSET]);
 
 	return $lexer;
 	
+}
+
+sub getLine {
+	return $_[0]->[LEXER_YYLINENO];
+}
+
+sub line {
+	return $_[0]->[LEXER_YYLINENO];
+}
+
+sub pos {
+	return $_[0]->[LEXER_PTR];
+}
+
+sub getPos {
+	return $_[0]->[LEXER_PTR];
+}
+
+sub getTokens {
+	return $_[0]->[LEXER_TOKENS];
+}
+
+sub tokens {
+	return $_[0]->[LEXER_TOKENS];
 }
 
 sub yyGet { return ord(substr($_[0]->[LEXER_STRING], $_[0]->[LEXER_PTR]++, 1)) };
@@ -104,9 +178,11 @@ sub yylex {
 	if (($res[0] eq '0') && ($res[1] eq '0')) {
 		return (undef, '');	# EOF
 	} else {
-		return ($res[0], DBIx::MyParsePP::Token->new(@res));
+		my $token = DBIx::MyParsePP::Token->new(@res);
+		push @{$lexer->[LEXER_TOKENS]}, $token;
+		return ($res[0], $token);
 	}
-}	
+}
 
 sub MYSQLlex {
 	my $lexer = shift;
@@ -212,7 +288,7 @@ sub MYSQLlex {
 			my $length = $lexer->[LEXER_PTR] - $lexer->[LEXER_TOK_START] - 1;
 			$start = $lexer->[LEXER_PTR];
 
-			if ($lexer->[LEXER_IGNORE_SPACE]) {
+			if ($lexer->[LEXER_SQL_MODE] & MODE_IGNORE_SPACE) {
 				for(; $state_map->[$c] eq 'MY_LEX_SKIP'; $c = $lexer->yyGet()) {};
 			}
 
@@ -465,14 +541,14 @@ sub MYSQLlex {
 			$lexer->[LEXER_OPTIONS] |= OPTION_FOUND_COMMENT;
 			if ($lexer->yyPeek() == ord('!')) {
 				$lexer->yySkip();
-				my $version = $lexer->[LEXER_VERSION_ID];
+				my $version = $lexer->[LEXER_VERSION];
 				$state = 'MY_LEX_START';
 				if ($lexer->my_isdigit($lexer->yyPeek())) {
 					$version = substr($string, $lexer->[LEXER_PTR], 5);
 					$lexer->[LEXER_PTR] += 5;	# FIXME for version numbers different from 5 characters
 				}
 
-				if ($version <= $lexer->[LEXER_VERSION_ID]){
+				if ($version <= $lexer->[LEXER_VERSION]){
 					$lexer->[LEXER_IN_COMMENT] = 1;
 					next;
 				}
@@ -642,17 +718,17 @@ sub init_state_maps {
 
 sub my_mbcharlen { 1 };
 
-sub my_isalpha { $DBIx::MyParsePP::Ascii::ctype->[$_[1] + 1] & (CTYPE_U | CTYPE_L) }
+sub my_isalpha { $_[0]->[LEXER_CTYPE]->[$_[1] + 1] & (CTYPE_U | CTYPE_L) }
 
-sub my_isalnum { $DBIx::MyParsePP::Ascii::ctype->[$_[1] + 1] & (CTYPE_U | CTYPE_L | CTYPE_NMR) }
+sub my_isalnum { $_[0]->[LEXER_CTYPE]->[$_[1] + 1] & (CTYPE_U | CTYPE_L | CTYPE_NMR) }
 
-sub my_isxdigit { $DBIx::MyParsePP::Ascii::ctype->[$_[1] + 1] & CTYPE_X }
+sub my_isxdigit { $_[0]->[LEXER_CTYPE]->[$_[1] + 1] & CTYPE_X }
 
-sub my_isdigit { $DBIx::MyParsePP::Ascii::ctype->[$_[1] + 1] & CTYPE_NMR }
+sub my_isdigit { $_[0]->[LEXER_CTYPE]->[$_[1] + 1] & CTYPE_NMR }
 
-sub my_isspace { $DBIx::MyParsePP::Ascii::ctype->[$_[1] + 1] & CTYPE_SPC }
+sub my_isspace { $_[0]->[LEXER_CTYPE]->[$_[1] + 1] & CTYPE_SPC }
 
-sub my_iscntrl { $DBIx::MyParsePP::Ascii::ctype->[$_[1] + 1] & CTYPE_CTR }
+sub my_iscntrl { $_[0]->[LEXER_CTYPE]->[$_[1] + 1] & CTYPE_CTR }
 
 sub get_text {
 	my $lexer = shift;
@@ -837,6 +913,21 @@ sub find_keyword {
 	}
 
 	return () if not defined $symbol;
+	
+	if (
+		($symbol eq 'NOT_SYM') &&
+		($lexer->[LEXER_SQL_MODE] & MODE_HIGH_NOT_PRECEDENCE)
+	) {
+		$symbol = 'NOT2_SYM';
+	}
+
+	if (
+		($symbol eq 'OR_OR_SYM') &&
+		($lexer->[LEXER_SQL_MODE] & MODE_PIPES_AS_CONCAT)
+	) {
+		$symbol = 'OR2_SYM';
+	}
+
 	return ($symbol, $keyword);
 }
 
@@ -856,13 +947,17 @@ DBIx::MyParsePP::Lexer - Pure-perl SQL lexer based on MySQL's source
 	use DBIx::MyParsePP::Lexer;
 	use Data::Dumper;
 
-	my $lexer = DBIx::MyParsePP::Lexer->new($string);
+	my $lexer = DBIx::MyParsePP::Lexer->new(
+		string => $string
+	);
 	
 	while ( my $token = $lexer->yylex() ) {
 
 		print Dumper $token;
 		
 		last if $token->type() eq 'END_OF_INPUT';
+		print $lexer->pos();
+		print $lexer->line();
 	
 	}
 
@@ -874,6 +969,39 @@ The goal of the translation was to closely follow the method of operation of the
 therefore performance is suffering at the expense of compatibility. For example, the original character set
 definitions are used, rather than determining which letter is uppercase or lowercase using a Perl regular
 expression.
+
+=head1 CONSTRUCTOR
+
+The following arguments are available for the constructor. They are passed from L<DBIx::MyParsePP>:
+
+C<string> is the string being parsed.
+
+C<charset> is the character set of the string. This is important when determining what is a number and what is a
+separator in the string. The default value is C<'ascii'>, which is the only charset bundled with L<DBIx::MyParsePP>
+by default. Please contact the author if you need support for other character sets.
+
+C<version> is the MySQL version to be emulated. This only affects the processing of /*!##### sql_clause */ comments, where
+##### is the minimum version required to process sql_clause. The grammar itself is taken from MySQL 5.0.45, which is the
+default value of C<version>.
+
+C<sql_mode> contains flags that influence the behavoir of the parser. Valid constants are C<MODE_PIPES_AS_CONCAT>,
+C<MODE_ANSI_QUOTES>, C<MODE_IGNORE_SPACE>, C<MODE_NO_BACKSLASH_ESCAPES> and C<MODE_HIGH_NOT_PRECEDENCE>.
+The flags can be combined with the C<|> operator. By default no flags are set.
+
+C<client_capabilities> is flag reflecting the capabilities of the client that issued the query. Currently the only
+flag accepted is C<CLIENT_MULTI_STATEMENTS>, which controls whether several SQL statements can be parsed at once.
+By default no flags are set.
+
+C<stmt_prepare_mode> controls whether the statement being parsed is a prepared statement. The default is C<0>, however
+if this flag is set to C<1>, multiple SQL statements can not be parsed at once.
+
+=head1 METHODS
+
+C<pos()> and C<getPos()> return the current character position as counted from the start of the string
+
+C<getLine()> and C<line()> return the current line number.
+
+C<getTokens()> returns a reference to an array containing all tokens parsed so far.
 
 =head1 LICENCE
 
@@ -887,10 +1015,5 @@ This program is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License in the file named LICENCE for more details.
-
-=head1 BUGS
-
-One Lexer object is required for every string being parsed/lexed.
-Lexer-related options from MySQL are not configurable.
 
 =cut

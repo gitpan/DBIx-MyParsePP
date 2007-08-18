@@ -5,21 +5,13 @@ use strict;
 
 #########################
 
-use Test::More tests => 11;
+use DBIx::MyParsePP::Lexer;
 
-BEGIN { use_ok('DBIx::MyParsePP::Lexer') };
-BEGIN { use_ok('DBIx::MyParsePP::Token') };
-
-my $token_class = 'DBIx::MyParsePP::Token';
-
-my $lexer = DBIx::MyParsePP::Lexer->new($ARGV[0]);
+my $lexer = DBIx::MyParsePP::Lexer->new(string => $ARGV[0]);
 
 use Data::Dumper;
-my @tokens;
 while (1) {
 	my $token = $lexer->yylex();
 	print Dumper \$token;
-	print "len is ".length($token->value())."\n";
-	push @tokens, $token;
 	last if $token->[0] eq 'END_OF_INPUT';
 }

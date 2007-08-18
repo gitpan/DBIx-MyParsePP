@@ -2,6 +2,7 @@
 package DBIx::MyParsePP::Token;
 
 use DBIx::MyParsePP::Symbols;
+use strict;
 
 1;
 
@@ -38,6 +39,31 @@ sub setType {
 
 sub setValue {
 	$_[0]->[TOKEN_VALUE] = $_[1];
+}
+
+sub extract {
+	my $token = shift;
+
+	foreach my $match (@_) {
+		return $token if $token->type() eq $match;
+	}
+
+	return undef;
+}
+
+sub extractInner {
+	my $token = shift;
+	return $token->extract(@_);
+}
+
+sub children {
+	return ();
+}
+
+# Shrinking has no effect on tokens, just return original token
+
+sub shrink {
+	return $_[0];
 }
 
 sub toString {
@@ -112,7 +138,7 @@ C<value()> or C<getValue()> returns the value of the Token.
 
 C<setType($new_type)> and C<setValue($new_value)> can be used to manipulate the Token.
 
-C<asString()> returns the value of the token, quoted if necessary, as it would appear in a SQL statement. A leading
+C<toString()> returns the value of the token, quoted if necessary, as it would appear in a SQL statement. A leading
 space is added for most tokens in order to facilitate chaining tokens into a larger statement.
 
 =head1 TOKEN TYPES
